@@ -1,0 +1,12 @@
+# Dependency
+node_modules/
+
+# Environment variables (SANGAT PENTING)
+.env
+
+# Archive files
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
