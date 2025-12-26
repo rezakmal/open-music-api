@@ -1,0 +1,119 @@
+const dotenv = require('dotenv');
+const express = require('express');
+const cors = require('cors');
+
+const albums = require('./api/albums');
+const AlbumsService = require('./services/postgres/AlbumsService');
+const AlbumsValidator = require('./validator/albums');
+
+const songs = require('./api/songs');
+const SongsService = require('./services/postgres/SongsService');
+const SongsValidator = require('./validator/songs');
+
+const users = require('./api/users');
+const UsersService = require('./services/postgres/UsersService');
+const UsersValidator = require('./validator/users');
+
+const authentications = require('./api/authentications');
+const AuthenticationsService = require('./services/postgres/AuthenticationsService');
+const TokenManager = require('./tokenize/TokenManager');
+const AuthenticationsValidator = require('./validator/authentications');
+
+const playlists = require('./api/playlists');
+const PlaylistsService = require('./services/postgres/PlaylistsService');
+const PlaylistsValidator = require('./validator/playlists');
+
+const _exports = require('./api/exports');
+const ProducerService = require('./services/rabbitmq/ProducerService');
+const ExportsService = require('./services/postgres/ExportsService');
+const ExportsValidator = require('./validator/exports');
+
+const albumLikes = require('./api/albumLikes');
+const AlbumLikesService = require('./services/postgres/AlbumLikesService');
+
+const CacheService = require('./services/redis/CacheService');
+
+const ClientError = require('./exceptions/ClientError');
+
+// Uploads
+const StorageService = require('./services/storage/StorageService');
+const UploadsValidator = require('./validator/uploads');
+
+const path = require('path');
+
+dotenv.config();
+
+const init = async () => {
+  const albumsService = new AlbumsService();
+  const songsService = new SongsService();
+  const usersService = new UsersService();
+  const authenticationsService = new AuthenticationsService();
+  const playlistsService = new PlaylistsService();
+  const exportsService = new ExportsService(ProducerService, playlistsService);
+  const storageService = new StorageService(path.resolve(__dirname, 'api/uploads/file/images'));
+  const cacheService = new CacheService();
+  const albumLikesService = new AlbumLikesService(cacheService);
+  
+  const app = express();
+  const port = process.env.PORT || 5000;
+  const host = process.env.HOST || 'localhost';
+  
+  // Middleware
+  app.use(cors());
+  app.use(express.json());
+  
+  // Routes
+  app.use('/albums', albums(albumsService, { ...AlbumsValidator, ...UploadsValidator }, storageService));
+  app.use('/songs', songs(songsService, SongsValidator));
+  app.use('/users', users(usersService, UsersValidator));
+  app.use('/authentications', authentications(authenticationsService, usersService, TokenManager, AuthenticationsValidator));
+  app.use('/playlists', playlists(playlistsService, PlaylistsValidator));
+  app.use('/export', _exports(exportsService, ExportsValidator));
+  app.use('/albums', albumLikes(albumLikesService));
+  
+  // Static files
+  app.use('/upload/images', express.static(path.resolve(__dirname, 'api/uploads/file/images')));
+  
+  // Global Error Handling
+  app.use((err, req, res, next) => {
+    if (err instanceof ClientError) {
+      return res.status(err.statusCode).json({
+        status: 'fail',
+        message: err.message,
+      });
+    }
+    
+    if(err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        status: 'fail',
+        message: err.message,
+      });
+    }
+    
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        status: 'fail',
+        message: err.message,
+      });
+    }
+    
+    if (err.status) {
+      return res.status(err.status).json({
+        status: 'fail',
+        message: err.message,
+      });
+    }
+    
+    console.error(err);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Terjadi kegagalan pada server kami',
+    });
+  });
+  
+  app.listen(port, host, () => {
+    console.log(`Server berjalan pada http://${host}:${port}`);
+  });
+};
+
+init();
